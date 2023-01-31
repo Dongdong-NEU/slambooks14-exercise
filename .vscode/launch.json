@@ -1,0 +1,30 @@
+//launch.json文件：指定需要调试的可执行程序信息及调试前序工作
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "(gdb) 启动",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/code_test",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${fileDirname}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",   //你的调试器可执行文件名字；
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "build",  //在调试前先执行tasks.json中的build；
+            "miDebuggerPath": "/usr/bin/gdb" //"MIMode"的存放路径，Ubuntu里面没有的话需要装一个gdb;
+        }
+    ]
+}
