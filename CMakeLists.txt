@@ -1,11 +1,17 @@
 cmake_minimum_required(VERSION 2.8.3)
 
-project(eigenMatrix)
+project(drawTrajectory)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
 # 寻找Eigen库
 find_package(Eigen3 REQUIRED)
+find_package(Sophus REQUIRED)
+find_package(Pangolin REQUIRED)
+
 # 将Eigen库include进来
 include_directories(${EIGEN3_INCLUDE_DIRS})
+include_directories(${Sophus_INCLUDE_DIRS})
+include_directories(${Pangolin_INCLUDE_DIRS})
 
-add_executable(eigenMatrix main.cpp ) #src/image_process.cpp
+add_executable(drawTrajectory draw_trajectory.cpp) 
+target_link_libraries(drawTrajectory ${Sophus_LIBRARIES} ${Pangolin_LIBRARIES})
