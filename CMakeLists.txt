@@ -13,5 +13,10 @@ include_directories(${EIGEN3_INCLUDE_DIRS})
 include_directories(${Sophus_INCLUDE_DIRS})
 include_directories(${Pangolin_INCLUDE_DIRS})
 
+add_executable(useSophus useSophus.cpp)
 add_executable(drawTrajectory draw_trajectory.cpp) 
+add_executable(trajctoryError trajectoryError.cpp) 
+
 target_link_libraries(drawTrajectory ${Sophus_LIBRARIES} ${Pangolin_LIBRARIES})
+target_link_libraries(trajctoryError ${Sophus_LIBRARIES} ${Pangolin_LIBRARIES})
+target_link_libraries(useSophus Sophus::Sophus)

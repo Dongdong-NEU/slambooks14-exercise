@@ -14,6 +14,7 @@ typedef std::vector<Sophus::SE3d, Eigen::aligned_allocator<Sophus::SE3d>> Trajec
 // function for plotting trajectory, don't edit this code
 // start point is red and end point is blue
 void DrawTrajectory(const TrajectoryType &gt);
+
 TrajectoryType ReadTrajectory(const string &path);
 
 int main(int argc, char **argv) {
