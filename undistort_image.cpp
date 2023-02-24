@@ -8,13 +8,13 @@
 
 using namespace std;
 
-string image_file = "/home/xhd/视频/my_vslam/slambooks14-exercise/image/test.png";   // 请确保路径正确
+string image_file = "/home/xhd/视频/my_vslam/slambooks14-exercise/image/azure_image_to_depth.png";   // 请确保路径正确
 
 int main(int argc, char **argv) {
 
 
-    double k1 = -0.28340811, k2 = 0.07395907, p1 = 0.00019359, p2 = 1.76187114e-05;
-    double fx = 458.654, fy = 457.296, cx = 367.215, cy = 248.375;
+    double k1 = 0.262383, k2 = -0.953104, k3 = 1.163314, p1 = -0.005358, p2 = 0.002628;
+    double fx = 517.306408, fy = 516.469215, cx = 318.643040, cy = 255.313989;
     cv::Mat image = cv::imread(image_file,0);   // 图像是灰度图，CV_8UC1
     int rows = image.rows, cols = image.cols;
     cv::Mat image_undistort = cv::Mat(rows, cols, CV_8UC1);   // 去畸变以后的图
@@ -29,8 +29,8 @@ int main(int argc, char **argv) {
             double x = (u - cx) / fx, y = (v - cy) / fy;
             double r = sqrt(x * x + y * y);
 
-            u_distorted = x * (1 + k1*r*r + k2*r*r*r*r) + 2 * p1 * x * y + p2*(r*r + 2*x*x);
-            v_distorted = y * (1 + k1*r*r + k2*r*r*r*r) + 2 * p2 * x * y + p1*(r*r + 2*y*y);
+            u_distorted = x * (1 + k1*r*r + k2*r*r*r*r + k3*r*r*r*r*r*r) + 2 * p1 * x * y + p2*(r*r + 2*x*x);
+            v_distorted = y * (1 + k1*r*r + k2*r*r*r*r + k3*r*r*r*r*r*r) + 2 * p2 * x * y + p1*(r*r + 2*y*y);
 
             u_distorted = fx * u_distorted + cx;
             v_distorted = fy * v_distorted + cy;
@@ -56,8 +56,8 @@ int main(int argc, char **argv) {
 
     auto start2 = std::chrono::high_resolution_clock::now();
     //OpenCV去畸变函数的使用
-    const cv::Mat K = ( cv::Mat_<double> ( 3,3 ) << 458.645, 0.0, 367.215, 0.0, 457.296, 248.375, 0.0, 0.0, 1.0 );
-    const cv::Mat D = ( cv::Mat_<double> ( 4,1 ) << -0.28340811,  0.07395907, 0.00019359, 1.76187114e-05 );
+    const cv::Mat K = ( cv::Mat_<double> ( 3,3 ) << 510.891164, 0.0, 331.589934, 0.0, 511.345583, 326.136787, 0.0, 0.0, 1.0 );
+    const cv::Mat D = ( cv::Mat_<double> ( 5,1 ) << -0.352349, 0.166615, 0.000871,-0.000755, 0.0000007);
 
     // const string str = "/home/jiang/4_learn/WeChatCode/ImageUndistort/data/";
     const int nImage = 1;
@@ -66,11 +66,10 @@ int main(int argc, char **argv) {
 
     cv::Mat map1, map2;
     cv::Size imageSize(ImgWidth, ImgHeight);
-    const double alpha = 5;
+    const double alpha = 0;
     
     //                                               内参, 畸变系数, 图像尺寸,比例因子,输出图像尺寸, 输出感兴趣区域设置;
     cv::Mat NewCameraMatrix = getOptimalNewCameraMatrix(K, D, imageSize, alpha, imageSize, 0);
-
     cv::initUndistortRectifyMap(K, D, cv::Mat(), NewCameraMatrix, imageSize, CV_16SC2, map1, map2);
 
     for(int i = 0; i < nImage; i++)
