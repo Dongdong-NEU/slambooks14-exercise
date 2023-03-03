@@ -1,11 +1,45 @@
 cmake_minimum_required(VERSION 2.8.3)
 
-project(eigenMatrix)
+project(ORBPranctice)
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-# 寻找Eigen库
-find_package(Eigen3 REQUIRED)
-# 将Eigen库include进来
-include_directories(${EIGEN3_INCLUDE_DIRS})
+set(CMAKE_BUILD_TYPE "Release")
+add_definitions("-DENABLE_SSE")
+set(CMAKE_CXX_FLAGS "-std=c++11 -O2 ${SSE_FLAGS} -msse4")
 
-add_executable(eigenMatrix main.cpp ) #src/image_process.cpp
+
+find_package(Eigen3 REQUIRED)
+include_directories(${EIGEN3_INCLUDE_DIRS})
+include_directories("/usr/include/eigen3/")
+find_package(OpenCV REQUIRED)
+include_directories(${OpenCV_INCLUDE_DIRS})
+find_package(Sophus REQUIRED)
+include_directories(${Sophus_INCLUDE_DIRS})
+find_package(G2O REQUIRED)
+include_directories(${G2O_INCLUDE_DIRS})
+find_package(Pangolin REQUIRED)
+include_directories(${Pangolin_INCLUDE_DIRS})
+
+add_executable(computeORB ./../orb_feature/computeORB.cpp ) 
+target_link_libraries(computeORB ${OpenCV_LIBS})
+
+add_executable(E2Rt ./../E2Rt/E2Rt.cpp ) 
+target_link_libraries(E2Rt Sophus::Sophus)
+
+add_executable(triangulation ./../E2Rt/triangulation.cpp)
+target_link_libraries(triangulation  ${OpenCV_LIBS})
+
+add_executable(PNP ./../GN-BA/pose_estimation_3d2d.cpp)
+target_link_libraries(PNP ${OpenCV_LIBS} g2o_core g2o_stuff)
+
+add_executable(GN-BA ./../GN-BA/GN-BA.cpp)
+target_link_libraries(GN-BA ${OpenCV_LIBS} g2o_core g2o_stuff)
+
+add_executable(myICP ./../ICP/myICP.cpp)
+target_link_libraries(myICP ${OpenCV_LIBS} Sophus::Sophus  ${Pangolin_LIBRARIES})
+
+add_executable(pose_estimation_3d3d ./../ICP/pose_estimation_3d3d.cpp)
+target_link_libraries(pose_estimation_3d3d ${OpenCV_LIBS} Sophus::Sophus  ${Pangolin_LIBRARIES} g2o_core g2o_stuff)
+
+
+
