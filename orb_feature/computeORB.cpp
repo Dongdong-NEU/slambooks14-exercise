@@ -118,16 +118,16 @@ void computeAngle(const cv::Mat &image, vector<cv::KeyPoint> &keypoints) {
     int half_patch_size = 8;
     for (auto &kp : keypoints) {
         kp.angle = 0; // compute kp.angle 
-        int x = cvRound(kp.pt.x);
-        int y = cvRound(kp.pt.y);
-        if(x - half_patch_size < 0 || x + half_patch_size > image.cols ||
-           y - half_patch_size < 0 || y + half_patch_size > image.rows)
+        int col = cvRound(kp.pt.x); // cols
+        int row = cvRound(kp.pt.y); // rows
+        if(col - half_patch_size < 0 || col + half_patch_size > image.cols ||
+           row - half_patch_size < 0 || row + half_patch_size > image.rows)
            continue;
         double m01 = 0, m10 = 0;
-        for( int i = -half_patch_size; i < half_patch_size; i++){  //mji; 行
-            for(int j = -half_patch_size; j < half_patch_size; j++){ // 列
-                m01 += i * image.at<uchar>(y + i, x + j);
-                m10 += j * image.at<uchar>(y + i, x + j);
+        for( int i = -half_patch_size; i < half_patch_size; i++){  //mij; 16 * 16 : -8 -7 ...,0,...7;
+            for(int j = -half_patch_size; j < half_patch_size; j++){ // 列, 所以,col + j
+                m01 += j * image.at<uchar>(row + i, col + j);
+                m10 += i * image.at<uchar>(row + i, col + j);
             }
         }
         kp.angle = std::atan(m01/m10)*180/pi;  //将弧度制转化为角度制;
@@ -400,12 +400,12 @@ int ORB_pattern[256 * 4] = {
 // compute the descriptor
 void computeORBDesc(const cv::Mat &image, vector<cv::KeyPoint> &keypoints, vector<DescType> &desc) {
     for (auto &kp: keypoints) {
-        DescType d(256, false);
+        DescType d(256, false);//256维的描述子;
         for (int i = 0; i < 256; i++) {
             d[i] = 0;  // if kp goes outside, set d.clear()
             auto cos_ = float(cos(kp.angle*pi/180));
             auto sin_ = float(sin(kp.angle*pi/180));
-            //旋转当前p(u,v), q(u,v);
+            //旋转当前p(u,v), q(u,v); 
             cv::Point2f p_r(cos_*ORB_pattern[4*i]-sin_*ORB_pattern[4*i+1],
                     sin_*ORB_pattern[4*i]+cos_*ORB_pattern[4*i+1]);
             cv::Point2f q_r(cos_*ORB_pattern[4*i+2]-sin_*ORB_pattern[4*i+3],
@@ -468,7 +468,8 @@ void bfMatch(const vector<DescType> &desc1, const vector<DescType> &desc2, vecto
 
   for (size_t i1 = 0; i1 < desc1.size(); ++i1) {
     if (desc1[i1].empty()) continue;
-    cv::DMatch m{i1, 0, 256};
+    // DMatch(int _queryIdx, int _trainIdx, float _distance);
+    cv::DMatch m{i1, 0, 256}; 
     for (size_t i2 = 0; i2 < desc2.size(); ++i2) {
       if (desc2[i2].empty()) continue;
       int distance = 0;
