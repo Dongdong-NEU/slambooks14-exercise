@@ -330,6 +330,7 @@ protected:
 };
 //调试ing
 //tiaosh
+// err
 #if 1
 /// g2o edge-- 修改为二元边，两个顶点为相机位姿VertexPose和空间点坐标VertexPoint
 class EdgeProjectXYZRGBDPoseAndPoint : public g2o::BaseBinaryEdge<3, Eigen::Vector3d, VertexPose, VertexPoint> {
