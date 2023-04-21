@@ -21,6 +21,8 @@ find_package(CSparse REQUIRED)
 include_directories(${CSPARSE_INCLUDE_DIR})
 find_package(Pangolin REQUIRED)
 include_directories(${Pangolin_INCLUDE_DIRS})
+find_package(Ceres REQUIRED)
+include_directories(${CERES_INCLUDE_DIRS})
 
 add_executable(computeORB ./../orb_feature/computeORB.cpp ) 
 target_link_libraries(computeORB ${OpenCV_LIBS})
@@ -57,6 +59,9 @@ g2o_core g2o_stuff  g2o_types_sba g2o_types_slam3d
 g2o_csparse_extension g2o_solver_csparse
 cholmod g2o_solver_cholmod 
 ${Sophus_LIBRARIES})
+
+add_executable(pnp_ceres ./../PNP_ICP_Practice/pnp_ceres.cpp)
+target_link_libraries(pnp_ceres ${OpenCV_LIBS} ${CERES_LIBRARIES})
 
 add_executable(PNP_Err ./../GN-BA/PNP_Err_test.cpp)
 target_link_libraries(PNP_Err ${OpenCV_LIBS} g2o_core g2o_stuff  ${Sophus_LIBRARIES} )

@@ -34,10 +34,10 @@ struct PnPReprojectionError {
                   T* residuals) const {
 		    
     T p_transformed[3], p_origin[3];
-    p_origin[0]=T(_pts_3d.x);
+    p_origin[0]=T(_pts_3d.x);  //原始三维点;
     p_origin[1]=T(_pts_3d.y);
     p_origin[2]=T(_pts_3d.z);
-    ceres::AngleAxisRotatePoint(rotation_vector, p_origin, p_transformed);
+    ceres::AngleAxisRotatePoint(rotation_vector, p_origin, p_transformed); //将p_origin旋转;
     
     //旋转后加上平移向量
     p_transformed[0] += translation_vector[0]; 
@@ -51,11 +51,11 @@ struct PnPReprojectionError {
     
     double fx=520.9, fy=521.0, cx=325.1, cy=249.7;
     // Compute final projected point position.
-    T predicted_x = fx * xp + cx;
+    T predicted_x = fx * xp + cx; // 投影像素点;
     T predicted_y = fy * yp + cy;
 
     // The error is the difference between the predicted and observed position.
-    residuals[0] = T(_pts_2d.x) - predicted_x;
+    residuals[0] = T(_pts_2d.x) - predicted_x; //第一帧的减去第二帧的
     residuals[1] = T(_pts_2d.y) - predicted_y;
     return true;
   }

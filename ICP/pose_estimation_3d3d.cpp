@@ -7,12 +7,15 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 #include <Eigen/SVD>
+
 #include <g2o/core/base_vertex.h>
 #include <g2o/core/base_unary_edge.h>
 #include <g2o/core/block_solver.h>
 #include <g2o/core/optimization_algorithm_gauss_newton.h>
 #include <g2o/core/optimization_algorithm_levenberg.h>
 #include <g2o/solvers/dense/linear_solver_dense.h>
+#include <g2o/types/slam3d/se3quat.h>
+
 #include <chrono>
 #include <sophus/se3.hpp>
 #include <g2o/core/base_binary_edge.h>
@@ -39,10 +42,289 @@ void bundleAdjustment(
   const vector<Point3f> &points_2d,
   Mat &R, Mat &t
 );
+
+/// vertex and edges used in g2o ba
+class VertexPose : public g2o::BaseVertex<6, Sophus::SE3d> {
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+
+  virtual void setToOriginImpl() override {
+    _estimate = Sophus::SE3d();
+  }
+
+  /// left multiplication on SE3
+  virtual void oplusImpl(const double *update) override {
+    Eigen::Matrix<double, 6, 1> update_eigen;
+    update_eigen << update[0], update[1], update[2], update[3], update[4], update[5];
+    _estimate = Sophus::SE3d::exp(update_eigen) * _estimate; // 第一次更新_estimate是单位矩阵,之后_estimate就是i被更新过了;
+  }
+
+  virtual bool read(istream &in) override {}
+
+  virtual bool write(ostream &out) const override {}
+};
+
+/***************************************************************************************************/
+/// 新增的空间点顶点
+class VertexPoint : public g2o::BaseVertex<3, Eigen::Vector3d> {
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+
+  virtual void setToOriginImpl() override {
+    _estimate = Eigen::Vector3d(0,0,0);
+  }
+
+  /// 空间点
+  virtual void oplusImpl(const double *update) override {
+    _estimate += Eigen::Vector3d(update[0], update[1], update[2]) ;
+  }
+
+  virtual bool read(istream &in) override {}
+
+  virtual bool write(ostream &out) const override {}
+};
+class EdgeProjectXYZRGBDPoseOnly : public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPose> {
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+
+  EdgeProjectXYZRGBDPoseOnly(const Eigen::Vector3d &point) : _point(point) {}
+
+  virtual void computeError() override {
+    const VertexPose *pose = static_cast<const VertexPose *> ( _vertices[0] );
+    _error = _measurement - pose->estimate() * _point;
+  }
+
+  virtual void linearizeOplus() override {
+    VertexPose *pose = static_cast<VertexPose *>(_vertices[0]);
+    Sophus::SE3d T = pose->estimate();
+    Eigen::Vector3d xyz_trans = T * _point;
+    // _jacobianOplusXi 3*6
+    _jacobianOplusXi.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity(); // 左上角开始
+    _jacobianOplusXi.block<3, 3>(0, 3) = Sophus::SO3d::hat(xyz_trans); // 第一行第三列开始
+  }
+  bool read(istream &in) {}
+  bool write(ostream &out) const {}
+protected:
+  Eigen::Vector3d _point;
+};
+
+class EdgeProjectXYZRGBDPoseAndPoint : public g2o::BaseBinaryEdge<3, Eigen::Vector3d, VertexPose, VertexPoint> {
+public:
+  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
+
+  //EdgeProjectXYZRGBDPoseAndPoint(const Eigen::Vector3d &point) : _point(point) {}
+  
+  virtual void computeError() override {
+    const VertexPose *pose = static_cast<const VertexPose *> ( _vertices[0] );
+    const VertexPoint *point = static_cast<const VertexPoint *> ( _vertices[1] );
+    _error = _measurement - pose->estimate() * point->estimate();
+    //_measurement指世界坐标系下（即第一组相机的坐标系）第一组相机求得的三维点
+    //pose->estimate() * point->estimate()指从第二个相机的坐标系下转化到世界坐标系下第二组相机求得的三维点
+  }
+
+  //  virtual void linearizeOplus()override final                //这里override 表示override覆盖基类的同名同参函数， final表示派生类的某个函数不能覆盖这个函数
+  //   {
+  //       VertexPose* pose = dynamic_cast<VertexPose *> (_vertices[0]);
+  //       VertexPoint * point = dynamic_cast< VertexPoint * > (_vertices[1] );
+  //       Sophus::SE3d T = pose->estimate();
+  //       Eigen::Vector3d xyz_trans =  point->estimate();//映射到第二帧相机坐标系下的坐标值
+  //       double x = xyz_trans[0];                               //第一帧到第二帧坐标系下变换后的坐标值
+  //       double y = xyz_trans[1];
+  //       double z = xyz_trans[2];
+
+  //       //关于空间点的雅克比矩阵-R
+  //       g2o::SE3Quat T_g2o(T.rotationMatrix(), T.translation());
+  //       // _jacobianOplusXi = -T_g2o.rotation().toRotationMatrix();
+  //        _jacobianOplusXi = -T.rotationMatrix();
+
+  //       //3x6的关于优化变量的雅克比矩阵 可以看书上p179页 自己推到的结果
+  //       _jacobianOplusXj(0,0) = 0;
+  //       _jacobianOplusXj(0,1) = -z;
+  //       _jacobianOplusXj(0,2) = y;
+  //       _jacobianOplusXj(0,3) = -1;
+  //       _jacobianOplusXj(0,4) = 0;
+  //       _jacobianOplusXj(0,5) = 0;
+
+  //       _jacobianOplusXj(1,0) = z;
+  //       _jacobianOplusXj(1,1) = 0;
+  //       _jacobianOplusXj(1,2) = -x;
+  //       _jacobianOplusXj(1,3) = 0;
+  //       _jacobianOplusXj(1,4) = -1;
+  //       _jacobianOplusXj(1,5) = 0;
+
+  //       _jacobianOplusXj(2,0) = -y;
+  //       _jacobianOplusXj(2,1) = x;
+  //       _jacobianOplusXj(2,2) = 0;
+  //       _jacobianOplusXj(2,3) = 0;
+  //       _jacobianOplusXj(2,4) = 0;
+  //       _jacobianOplusXj(2,5) = -1;
+  //   }
+
+  bool read(istream &in) {}
+
+  bool write(ostream &out) const {}
+
+protected:
+  Eigen::Vector3d _point;
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+void bundleAdjustment(
+  const vector<Point3f> &pts1,
+  const vector<Point3f> &pts2,
+  Mat &R, Mat &t) {
+  // 构建图优化，先设定g2o
+  typedef g2o::BlockSolverX BlockSolverType;
+  typedef g2o::LinearSolverDense<BlockSolverType::PoseMatrixType> LinearSolverType; // 线性求解器类型
+  // 梯度下降方法，可以从GN, LM, DogLeg 中选
+  auto solver = new g2o::OptimizationAlgorithmLevenberg(
+    g2o::make_unique<BlockSolverType>(g2o::make_unique<LinearSolverType>()));
+  g2o::SparseOptimizer optimizer;     // 图模型
+  optimizer.setAlgorithm(solver);   // 设置求解器
+  optimizer.setVerbose(true);       // 打开调试输出
+
+  // vertex
+  VertexPose *pose = new VertexPose(); // camera pose
+  pose->setId(0);
+  pose->setEstimate(Sophus::SE3d());
+  optimizer.addVertex(pose);
+
+  // edges
+  for (size_t i = 0; i < pts1.size(); i++) {
+    EdgeProjectXYZRGBDPoseOnly *edge = new EdgeProjectXYZRGBDPoseOnly(
+      Eigen::Vector3d(pts2[i].x, pts2[i].y, pts2[i].z));
+    edge->setVertex(0, pose);
+    edge->setMeasurement(Eigen::Vector3d(
+      pts1[i].x, pts1[i].y, pts1[i].z));
+    edge->setInformation(Eigen::Matrix3d::Identity());
+    optimizer.addEdge(edge);
+  }
+
+  chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+  optimizer.initializeOptimization();
+  optimizer.optimize(10);
+  chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+  chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>>(t2 - t1);
+  cout << "optimization costs time: " << time_used.count() << " seconds." << endl;
+
+  cout << endl << "after optimization:" << endl;
+  cout << "T=\n" << pose->estimate().matrix() << endl;
+
+  // convert to cv::Mat
+  Eigen::Matrix3d R_ = pose->estimate().rotationMatrix();
+  Eigen::Vector3d t_ = pose->estimate().translation();
+  R = (Mat_<double>(3, 3) <<
+    R_(0, 0), R_(0, 1), R_(0, 2),
+    R_(1, 0), R_(1, 1), R_(1, 2),
+    R_(2, 0), R_(2, 1), R_(2, 2)
+  );
+  t = (Mat_<double>(3, 1) << t_(0, 0), t_(1, 0), t_(2, 0));
+}
+
 void bundleAdjustment_point(
   const vector<Point3f> &pts1,
-   vector<Point3f> &pts2,
-  Mat &R, Mat &t) ;
+  vector<Point3f> &pts2,
+  Mat &R, Mat &t) {
+  // 构建图优化，先设定g2o
+  typedef g2o::BlockSolverX BlockSolverType;
+  typedef g2o::LinearSolverDense<BlockSolverType::PoseMatrixType> LinearSolverType; // 线性求解器类型
+  // 梯度下降方法，可以从GN, LM, DogLeg 中选
+  auto solver = new g2o::OptimizationAlgorithmLevenberg(
+    g2o::make_unique<BlockSolverType>(g2o::make_unique<LinearSolverType>()));
+  g2o::SparseOptimizer optimizer;     // 图模型
+  optimizer.setAlgorithm(solver);   // 设置求解器
+  optimizer.setVerbose(true);       // 打开调试输出
+
+  // vertex  李代数位姿
+  VertexPose *pose = new VertexPose(); // camera pose
+  pose->setId(0);  // 初始 id 为零;
+  pose->setEstimate(Sophus::SE3d());
+  optimizer.addVertex(pose);
+  
+  // vertex  空间点
+  for (size_t i = 0; i < pts2.size(); i++){
+  VertexPoint *point = new VertexPoint(); // camera pose
+  point->setId(i+1);  // 注意
+  point->setEstimate(Eigen::Vector3d(pts2[i].x, pts2[i].y, pts2[i].z));
+  optimizer.addVertex(point); // dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )当前顶点;
+  }
+  
+  // edges  pts1.size()=pts2.size()
+  for (size_t i = 0; i < pts1.size(); i++) {
+    EdgeProjectXYZRGBDPoseAndPoint *edge = new EdgeProjectXYZRGBDPoseAndPoint();
+    edge->setVertex(0, dynamic_cast<VertexPose *> (pose));  // 两种顶点;
+    edge->setVertex(1, dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) ));  //dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )当前顶点;
+    edge->setMeasurement(Eigen::Vector3d(pts1[i].x, pts1[i].y, pts1[i].z)); // 传递观测值;
+    edge->setInformation(Eigen::Matrix3d::Identity());
+    optimizer.addEdge(edge);
+  }
+
+  chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
+  optimizer.initializeOptimization();
+  optimizer.optimize(10);
+  chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
+  chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>>(t2 - t1);
+  cout << "optimization costs time: " << time_used.count() << " seconds." << endl;
+
+  cout << endl << "after optimization:" << endl;
+  cout << "T=\n" << pose->estimate().matrix() << endl;
+
+  // convert to cv::Mat
+  Eigen::Matrix3d R_ = pose->estimate().rotationMatrix();
+  Eigen::Vector3d t_ = pose->estimate().translation();
+  R = (Mat_<double>(3, 3) <<
+    R_(0, 0), R_(0, 1), R_(0, 2),
+    R_(1, 0), R_(1, 1), R_(1, 2),
+    R_(2, 0), R_(2, 1), R_(2, 2)
+  );
+  t = (Mat_<double>(3, 1) << t_(0, 0), t_(1, 0), t_(2, 0));
+  
+  for(size_t i = 0; i < pts2.size(); i++)
+    {
+        Eigen::Vector3d vertex_point = dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )->estimate();
+        pts2[i] = Point3f(vertex_point(0),vertex_point(1),vertex_point(2));
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 int main(int argc, char **argv) {
   if (argc != 5) {
@@ -84,7 +366,7 @@ int main(int argc, char **argv) {
   std::cout << "calling SVD methods. " << std::endl;
 
   Mat R, t;
-  pose_estimation_3d3d(pts1, pts2, R, t);
+  // pose_estimation_3d3d(pts1, pts2, R, t);
   std::cout << std::endl;
 
   cout << "ICP via SVD results: " << endl;
@@ -99,8 +381,9 @@ int main(int argc, char **argv) {
   cout << "calling bundle adjustment" << endl;
 
   // bundleAdjustment(pts1, pts2, R, t);
-   cout << "calling bundle adjustment_points" << endl;
+
   bundleAdjustment_point(pts1, pts2, R, t);
+  
 
   std::cout <<"##################################" << std::endl;
   std::cout << std::endl;
@@ -216,261 +499,4 @@ void pose_estimation_3d3d(const vector<Point3f> &pts1,
   );
   t = (Mat_<double>(3, 1) << t_(0, 0), t_(1, 0), t_(2, 0));
 }
-/// vertex and edges used in g2o ba
-class VertexPose : public g2o::BaseVertex<6, Sophus::SE3d> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
 
-  virtual void setToOriginImpl() override {
-    _estimate = Sophus::SE3d();
-  }
-
-  /// left multiplication on SE3
-  virtual void oplusImpl(const double *update) override {
-    Eigen::Matrix<double, 6, 1> update_eigen;
-    update_eigen << update[0], update[1], update[2], update[3], update[4], update[5];
-    _estimate = Sophus::SE3d::exp(update_eigen) * _estimate; 
-  }
-  virtual bool read(istream &in) override {}
-  virtual bool write(ostream &out) const override {}
-};
-
-class VertexPoint : public g2o::BaseVertex<3, Eigen::Vector3d> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-
-  virtual void setToOriginImpl() override {
-    _estimate = Eigen::Vector3d(0,0,0);
-  }
-
-  /// 空间点
-  virtual void oplusImpl(const double *update) override {
-    _estimate += Eigen::Vector3d(update[0], update[1], update[2]) ;
-  }
-
-  virtual bool read(istream &in) override {}
-  virtual bool write(ostream &out) const override {}
-};
-
-#if 0
-class EdgeProjectXYZRGBDPoseOnly : public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPose> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-  EdgeProjectXYZRGBDPoseOnly(const Eigen::Vector3d &point) : _point(point) {}
-  virtual void computeError() override {
-    const VertexPose *pose = static_cast<const VertexPose *> ( _vertices[0] );
-    _error = _measurement - pose->estimate() * _point;
-  }
-
-  virtual void linearizeOplus() override {
-    VertexPose *pose = static_cast<VertexPose *>(_vertices[0]);
-    Sophus::SE3d T = pose->estimate();
-    Eigen::Vector3d xyz_trans = T * _point;
-    // _jacobianOplusXi 3*6
-    _jacobianOplusXi.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity(); // 左上角开始
-    _jacobianOplusXi.block<3, 3>(0, 3) = Sophus::SO3d::hat(xyz_trans); // 第一行第三列开始
-  }
-
-  bool read(istream &in) {}
-  bool write(ostream &out) const {}
-protected:
-  Eigen::Vector3d _point;
-};
-/// g2o edge-- 修改为二元边，两个顶点为相机位姿VertexPose和空间点坐标VertexPoint
-class EdgeProjectXYZRGBDPoseAndPoint : public g2o::BaseBinaryEdge<3, Eigen::Vector3d, VertexPose, VertexPoint> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-
-  //EdgeProjectXYZRGBDPoseAndPoint(const Eigen::Vector3d &point) : _point(point) {}
-  
-  virtual void computeError() override {
-    const VertexPose *pose = static_cast<const VertexPose*> ( _vertices[0] );
-    const VertexPoint *point = static_cast<const VertexPoint*> ( _vertices[1] );
-    _error = _measurement - pose->estimate() * point->estimate();
-    //_measurement指世界坐标系下（即第一组相机的坐标系）第一组相机求得的三维点
-    //pose->estimate() * point->estimate()指从第二个相机的坐标系下转化到世界坐标系下第二组相机求得的三维点
-  }
-
-//   因为我们不知道雅克比矩阵，这里可以不写，g2o会自动求导，不过速度会下降
-//   virtual void linearizeOplus() override {
-//     VertexPose *pose = static_cast<VertexPose *>(_vertices[0]);
-//     Sophus::SE3d T = pose->estimate();
-//     Eigen::Vector3d xyz_trans = T * _point;
-//     _jacobianOplusXi.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
-//     _jacobianOplusXi.block<3, 3>(0, 3) = Sophus::SO3d::hat(xyz_trans);
-//   }
-  bool read(istream &in) {}
-  bool write(ostream &out) const {}
-protected:
-  Eigen::Vector3d _point;
-};
-#endif
-class EdgeProjectXYZRGBDPoseOnly : public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPose> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-  EdgeProjectXYZRGBDPoseOnly(const Eigen::Vector3d &point) : _point(point) {}
-  virtual void computeError() override {
-    const VertexPose *pose = static_cast<const VertexPose *> ( _vertices[0] );
-    _error = _measurement - pose->estimate() * _point;
-  }
-
-  virtual void linearizeOplus() override {
-    VertexPose *pose = static_cast<VertexPose *>(_vertices[0]);
-    Sophus::SE3d T = pose->estimate();
-    Eigen::Vector3d xyz_trans = T * _point;
-    // _jacobianOplusXi 3*6
-    _jacobianOplusXi.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity(); // 左上角开始
-    _jacobianOplusXi.block<3, 3>(0, 3) = Sophus::SO3d::hat(xyz_trans); // 第一行第三列开始
-  }
-
-  bool read(istream &in) {}
-  bool write(ostream &out) const {}
-protected:
-  Eigen::Vector3d _point;
-};
-
-#if 1
-/// g2o edge-- 修改为二元边，两个顶点为相机位姿VertexPose和空间点坐标VertexPoint
-class EdgeProjectXYZRGBDPoseAndPoint : public g2o::BaseBinaryEdge<3, Eigen::Vector3d, VertexPose, VertexPoint> {
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW;
-
-  //EdgeProjectXYZRGBDPoseAndPoint(const Eigen::Vector3d &point) : _point(point) {}
-  
-  virtual void computeError() override {
-    const VertexPose *pose = static_cast<const VertexPose*> ( _vertices[0] );
-    const VertexPoint *point = static_cast<const VertexPoint*> ( _vertices[1] );
-    _error = _measurement - pose->estimate() * point->estimate();
-    //_measurement指世界坐标系下（即第一组相机的坐标系）第一组相机求得的三维点
-    //pose->estimate() * point->estimate()指从第二个相机的坐标系下转化到世界坐标系下第二组相机求得的三维点
-  }
-
-//   因为我们不知道雅克比矩阵，这里可以不写，g2o会自动求导，不过速度会下降
-//   virtual void linearizeOplus() override {
-//     VertexPose *pose = static_cast<VertexPose *>(_vertices[0]);
-//     Sophus::SE3d T = pose->estimate();
-//     Eigen::Vector3d xyz_trans = T * _point;
-//     _jacobianOplusXi.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
-//     _jacobianOplusXi.block<3, 3>(0, 3) = Sophus::SO3d::hat(xyz_trans);
-//   }
-  bool read(istream &in) {}
-  bool write(ostream &out) const {}
-protected:
-  Eigen::Vector3d _point;
-};
-#endif
-void bundleAdjustment(
-  const vector<Point3f> &pts1,
-  const vector<Point3f> &pts2,
-  Mat &R, Mat &t) {
-  // 构建图优化，先设定g2o
-  typedef g2o::BlockSolverX BlockSolverType;
-  typedef g2o::LinearSolverDense<BlockSolverType::PoseMatrixType> LinearSolverType; // 线性求解器类型
-  // 梯度下降方法，可以从GN, LM, DogLeg 中选
-  auto solver = new g2o::OptimizationAlgorithmLevenberg(
-    g2o::make_unique<BlockSolverType>(g2o::make_unique<LinearSolverType>()));
-  g2o::SparseOptimizer optimizer;     // 图模型
-  optimizer.setAlgorithm(solver);   // 设置求解器
-  optimizer.setVerbose(true);       // 打开调试输出
-
-  // vertex
-  VertexPose *pose = new VertexPose(); // camera pose
-  pose->setId(0);
-  pose->setEstimate(Sophus::SE3d());
-  optimizer.addVertex(pose);
-
-  // edges
-  for (size_t i = 0; i < pts1.size(); i++) {
-    EdgeProjectXYZRGBDPoseOnly *edge = new EdgeProjectXYZRGBDPoseOnly(
-      Eigen::Vector3d(pts2[i].x, pts2[i].y, pts2[i].z));
-    edge->setVertex(0, pose);
-    edge->setMeasurement(Eigen::Vector3d(
-      pts1[i].x, pts1[i].y, pts1[i].z));
-    edge->setInformation(Eigen::Matrix3d::Identity());
-    optimizer.addEdge(edge);
-  }
-
-  chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-  optimizer.initializeOptimization();
-  optimizer.optimize(10);
-  chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-  chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>>(t2 - t1);
-  cout << "optimization costs time: " << time_used.count() << " seconds." << endl;
-
-  cout << endl << "after optimization:" << endl;
-  cout << "T=\n" << pose->estimate().matrix() << endl;
-
-  // convert to cv::Mat
-  Eigen::Matrix3d R_ = pose->estimate().rotationMatrix();
-  Eigen::Vector3d t_ = pose->estimate().translation();
-  R = (Mat_<double>(3, 3) <<
-    R_(0, 0), R_(0, 1), R_(0, 2),
-    R_(1, 0), R_(1, 1), R_(1, 2),
-    R_(2, 0), R_(2, 1), R_(2, 2)
-  );
-  t = (Mat_<double>(3, 1) << t_(0, 0), t_(1, 0), t_(2, 0));
-}
-
-void bundleAdjustment_point(
-  const vector<Point3f> &pts1,
-   vector<Point3f> &pts2,
-  Mat &R, Mat &t) {
-  // 构建图优化，先设定g2o
-  typedef g2o::BlockSolverX BlockSolverType;
-  typedef g2o::LinearSolverDense<BlockSolverType::PoseMatrixType> LinearSolverType; // 线性求解器类型
-  // 梯度下降方法，可以从GN, LM, DogLeg 中选
-  auto solver = new g2o::OptimizationAlgorithmLevenberg(
-                g2o::make_unique<BlockSolverType>(g2o::make_unique<LinearSolverType>()));
-  g2o::SparseOptimizer optimizer;     // 图模型
-  optimizer.setAlgorithm(solver);   // 设置求解器
-  optimizer.setVerbose(true);       // 打开调试输出
-
-  // vertex  李代数位姿
-  VertexPose *pose = new VertexPose(); // camera pose
-  pose->setId(0);  
-  pose->setEstimate(Sophus::SE3d());
-  optimizer.addVertex(pose);
-  
-  // vertex  空间点
-  for (size_t i = 0; i < pts2.size(); i++){
-  VertexPoint *point = new VertexPoint(); // camera pose
-  point->setId(i+1);  // 注意
-  point->setEstimate(Eigen::Vector3d(pts2[i].x, pts2[i].y, pts2[i].z));
-  optimizer.addVertex(point); // dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )当前顶点;
-  }
-  
-  // edges  pts1.size()=pts2.size()
-  for (size_t i = 0; i < pts1.size(); i++) {
-    EdgeProjectXYZRGBDPoseAndPoint *edge = new EdgeProjectXYZRGBDPoseAndPoint();
-    edge->setVertex(0, pose);  // 两种顶点;
-    edge->setVertex(1, dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) ));  //dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )当前顶点;
-    edge->setMeasurement(Eigen::Vector3d(pts1[i].x, pts1[i].y, pts1[i].z)); // 传递观测值;
-    edge->setInformation(Eigen::Matrix3d::Identity());
-    optimizer.addEdge(edge);
-  }
-
-  chrono::steady_clock::time_point t1 = chrono::steady_clock::now();
-  optimizer.initializeOptimization();
-  optimizer.optimize(10);
-  chrono::steady_clock::time_point t2 = chrono::steady_clock::now();
-  chrono::duration<double> time_used = chrono::duration_cast<chrono::duration<double>>(t2 - t1);
-  cout << "optimization costs time: " << time_used.count() << " seconds." << endl;
-  cout << endl << "after optimization:" << endl;
-  cout << "T=\n" << pose->estimate().matrix() << endl;
-
-  // convert to cv::Mat
-  Eigen::Matrix3d R_ = pose->estimate().rotationMatrix();
-  Eigen::Vector3d t_ = pose->estimate().translation();
-  R = (Mat_<double>(3, 3) <<
-    R_(0, 0), R_(0, 1), R_(0, 2),
-    R_(1, 0), R_(1, 1), R_(1, 2),
-    R_(2, 0), R_(2, 1), R_(2, 2)
-  );
-  t = (Mat_<double>(3, 1) << t_(0, 0), t_(1, 0), t_(2, 0));
-  
-  for(size_t i = 0; i < pts2.size(); i++)
-    {
-        Eigen::Vector3d vertex_point = dynamic_cast<VertexPoint *> ( optimizer.vertex ( i+1 ) )->estimate();
-        pts2[i] = Point3f(vertex_point(0),vertex_point(1),vertex_point(2));
-    }
-}
